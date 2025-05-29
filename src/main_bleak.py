@@ -12,6 +12,9 @@ UART_SERVICE_UUID = "FFF0"
 # This characteristic should have 'write' or 'write without response' properties.
 WRITE_CHARACTERISTIC_UUID = "0000FFE1-0000-1000-8000-00805F9B34FB"
 
+# The Characteristic UUID to *read* data from the device (TX).
+READ_CHARACTERISTIC_UUID = "0000FFE1-0000-1000-8000-00805F9B34FB"
+
 # --- Asynchronous RoboticGloveController Class ---
 class RoboticGloveController:
     def __init__(self, device_address: str):
@@ -19,6 +22,7 @@ class RoboticGloveController:
         self.client: BleakClient = None
         self.is_connected = False
         self.write_char_object = None
+        self.read_char_object = None
 
     async def connect(self):
         """
@@ -56,7 +60,10 @@ class RoboticGloveController:
                 if str(char.uuid).upper() == WRITE_CHARACTERISTIC_UUID.upper():
                     self.write_char_object = char
                     print(f"Found write characteristic object: {self.write_char_object.uuid} (Handle: {self.write_char_object.handle})")
-                    break # Found it, no need to search further
+
+                if str(char.uuid).upper() == READ_CHARACTERISTIC_UUID.upper():
+                    self.read_char_object = char
+                    print(f"Found read characteristic object: {self.read_char_object.uuid} (Handle: {self.read_char_object.handle})")
 
             if self.write_char_object is None:
                 print(f"ERROR: Could not find write characteristic with UUID {WRITE_CHARACTERISTIC_UUID} "
@@ -85,6 +92,23 @@ class RoboticGloveController:
                 print(f"Error disconnecting: {e}")
         else:
             print("Not connected.")
+            
+    async def read_data(self):
+        """
+        Reads data from the read characteristic.
+        """
+        if not self.is_connected or not self.read_char_object:
+            print("Cannot read: Not connected or read characteristic not found.")
+            return
+
+        try:
+            data = await self.client.read_gatt_char(self.read_char_object)
+            decoded = data.decode("utf-8", errors="ignore")  # or parse/struct unpack if needed
+            print(f"Received (BLE): {decoded}")
+            return decoded
+        except Exception as e:
+            print(f"Error reading from characteristic: {e}")
+            return None
 
     async def _send_command(self, command_char: str, value: int):
         """
@@ -131,37 +155,12 @@ class RoboticGloveController:
 
     async def set_all_servos_angle(self, angle: int):
         """
-        Sets all servos to a specific angle.
+        Sets all finger servos to a specific angle.
         :param angle: The desired angle (0-180 degrees).
         """
-        for i in range(6):
+        for i in range(5):
             await self.set_servo_angle(i, angle)
         print(f"Set all servos to {angle} degrees.")
-
-    async def set_rgb_led(self, r: int, g: int, b: int):
-        """
-        Sets the RGB LED color.
-        :param r: Red component (0-255).
-        :param g: Green component (0-255).
-        :param b: Blue component (0-255).
-        """
-        if not all(0 <= val <= 255 for val in [r, g, b]):
-            print("RGB color components must be between 0 and 255.")
-            return
-
-        await self._send_command('G', r)
-        await self._send_command('H', g)
-        await self._send_command('I', b)
-        # Assuming 'J' still triggers FastLED.show(), but BLE might not need a dummy value
-        await self._send_command('J', 0)
-
-    async def play_buzzer_tone(self):
-        """Plays a short tone on the buzzer."""
-        await self._send_command('Z', 1)
-
-    async def stop_buzzer_tone(self):
-        """Stops any active tone on the buzzer."""
-        await self._send_command('Z', 0)
 
     # --- Helper for discovering devices ---
     @staticmethod
@@ -189,30 +188,20 @@ async def main():
     if await controller.connect():
         try:
             print("\n--- Testing Servo Control ---")
-            await controller.set_servo_angle(0, 45) # Move servo 0 to 45 degrees
-            await asyncio.sleep(1)
-            await controller.set_servo_angle(1, 135) # Move servo 1 to 135 degrees
-            await asyncio.sleep(1)
-            await controller.set_all_servos_angle(90) # Return all servos to center
+
+            await controller.set_all_servos_angle(0)
             await asyncio.sleep(2)
+            await controller.read_data()
 
-            # print("\n--- Testing RGB LED Control ---")
-            # await controller.set_rgb_led(255, 0, 0) # Red
-            # await asyncio.sleep(2)
-            # await controller.set_rgb_led(0, 255, 0) # Green
-            # await asyncio.sleep(2)
-            # await controller.set_rgb_led(0, 0, 255) # Blue
-            # await asyncio.sleep(2)
-            # await controller.set_rgb_led(0, 0, 0) # Off
-            # await asyncio.sleep(1)
-            # await controller.set_rgb_led(200, 200, 200) # White
-            # await asyncio.sleep(2)
+            await controller.set_servo_angle(5, 180)
+            await asyncio.sleep(1)
 
-            # print("\n--- Testing Buzzer Control ---")
-            # await controller.play_buzzer_tone()
-            # await asyncio.sleep(3)
-            # await controller.stop_buzzer_tone()
-            # await asyncio.sleep(1)
+            await controller.set_all_servos_angle(120)
+            await asyncio.sleep(2)
+            await controller.read_data()
+
+            await controller.set_servo_angle(5, 90)
+            await asyncio.sleep(1)
 
         except KeyboardInterrupt:
             print("\nExiting program.")
