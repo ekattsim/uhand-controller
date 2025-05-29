@@ -177,8 +177,9 @@ class RoboticGloveController:
 
 
 # --- Main execution block (Asyncio) ---
+import time
+
 async def main():
-    # First, run discovery to find device directly
     print("--- Discovering BLE Devices ---")
     device = await RoboticGloveController.discover_devices_async("Hiwonder")
     print("\n--- Discovery Complete ---")
@@ -187,21 +188,39 @@ async def main():
 
     if await controller.connect():
         try:
-            print("\n--- Testing Servo Control ---")
+            print("\n--- Interactive Mode ---")
+            print("Type a command character and value (e.g., A90), or 'q' to quit.")
+            while True:
+                user_input = input("Command: ").strip()
 
-            await controller.set_all_servos_angle(0)
-            await asyncio.sleep(2)
-            await controller.read_data()
+                if user_input.lower() == 'q':
+                    break
 
-            await controller.set_servo_angle(5, 180)
-            await asyncio.sleep(1)
+                if not user_input.endswith("$"):
+                    user_input += "$"
 
-            await controller.set_all_servos_angle(120)
-            await asyncio.sleep(2)
-            await controller.read_data()
+                # Measure latency
+                start_time = time.perf_counter()
 
-            await controller.set_servo_angle(5, 90)
-            await asyncio.sleep(1)
+                try:
+                    await controller.client.write_gatt_char(
+                        controller.write_char_object,
+                        user_input.encode("utf-8"),
+                        response=False
+                    )
+                    # Optional: wait for device to respond before reading
+                    # await asyncio.sleep(0.05)
+
+                    if controller.read_char_object:
+                        response = await controller.client.read_gatt_char(controller.read_char_object)
+                        print(f"Response: {response.decode('utf-8', errors='ignore')}")
+
+                except Exception as e:
+                    print(f"Error during communication: {e}")
+
+                end_time = time.perf_counter()
+                latency_ms = (end_time - start_time) * 1000
+                print(f"Round-trip time: {latency_ms:.2f} ms\n")
 
         except KeyboardInterrupt:
             print("\nExiting program.")
