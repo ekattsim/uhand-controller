@@ -1,4 +1,3 @@
-import asyncio
 from bleak import BleakClient, BleakScanner
 
 # The address/system ID of the Robotic Glove BLE device.
@@ -132,21 +131,44 @@ class RoboticGloveController:
         except Exception as e:
             print(f"Error sending command '{user_input}' over BLE: {e}")
 
+    async def set_all_servos_batch(self, angles: list[int]):
+        """
+        Sets all servos in a single, efficient batch command, as suggested.
+        Expects a list of 5 angles [Thumb, Index, Middle, Ring, Little].
+        Constructs a command like "A90$B30$C0$D45$E180$"
+        """
+        if len(angles) != 5:
+            print(f"ERROR: set_all_servos_batch requires a list of 5 angles. Got {len(angles)}.")
+            return
+
+        servo_chars = ['A', 'B', 'C', 'D', 'E']
+        command_parts = []
+        for i, angle in enumerate(angles):
+            clamped_angle = max(0, min(180, angle))
+            command_parts.append(f"{servo_chars[i]}{clamped_angle}$")
+
+        final_command = "".join(command_parts)
+        print(final_command)
+        await self._send_command(final_command)
+
     async def set_servo_angle(self, servo_index: int, angle: int):
         """
         Sets the angle for a specific servo.
-        :param servo_index: The index of the servo (0-5).
+        :param servo_index: The index of the servo (0-4 for Thumb to Little).
         :param angle: The desired angle (0-180 degrees).
         """
         if not 0 <= servo_index <= 5:
-            print("Servo index must be between 0 and 5.")
+            print(f"ERROR: Servo index {servo_index} must be between 0 and 5.")
             return
         if not 0 <= angle <= 180:
-            print("Angle must be between 0 and 180 degrees.")
-            return
+            print(f"WARNING: Angle {angle} is outside 0-180. Clamping.")
+            angle = max(0, min(180, angle))
 
+        # The command character 'A' corresponds to servo 0, 'B' to 1, etc.
         command_char = chr(ord('A') + servo_index)
-        await self._send_command(command_char, angle)
+        # The command is the character followed by the angle, e.g., "A90" or "C180".
+        command_string = f"{command_char}{angle}"
+        await self._send_command(command_string)
 
     async def set_all_servos_angle(self, angle: int):
         """
@@ -172,40 +194,3 @@ class RoboticGloveController:
 
         print(f"Device {name} found.")
         return device
-
-
-async def main():
-    print("--- Discovering BLE Devices ---")
-    device = await RoboticGloveController.discover_devices_async("Hiwonder")
-    print("\n--- Discovery Complete ---")
-
-    controller = RoboticGloveController(device) if device else RoboticGloveController(DEVICE_ADDRESS)
-
-    if await controller.connect():
-        try:
-            print("\n--- Interactive Mode ---")
-            print("Type a command character and value (e.g., A90), or 'q' to quit.")
-            while True:
-                user_input = input("Command: ").strip()
-
-                if user_input.lower() == 'q':
-                    break
-
-                # Write command
-                await controller._send_command(user_input)
-
-                # wait for device to respond before reading
-                await asyncio.sleep(0.05)
-                message = await controller.read_data()
-
-                print(f"Received (BLE): {message}")
-
-        except KeyboardInterrupt:
-            print("\nExiting program.")
-        finally:
-            await controller.disconnect()
-    else:
-        print("Could not connect to Robotic Glove. Exiting.")
-
-if __name__ == "__main__":
-    asyncio.run(main())
