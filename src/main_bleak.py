@@ -1,6 +1,5 @@
 import asyncio
 from bleak import BleakClient, BleakScanner
-import struct
 
 # The address/system ID of the Robotic Glove BLE device.
 DEVICE_ADDRESS = "24A528A5-46FC-C425-02D5-E59445D692C3"
@@ -15,7 +14,8 @@ WRITE_CHARACTERISTIC_UUID = "0000FFE1-0000-1000-8000-00805F9B34FB"
 # The Characteristic UUID to *read* data from the device (TX).
 READ_CHARACTERISTIC_UUID = "0000FFE1-0000-1000-8000-00805F9B34FB"
 
-# --- Asynchronous RoboticGloveController Class ---
+
+# Asynchronous RoboticGloveController Class
 class RoboticGloveController:
     def __init__(self, device_address: str):
         self.device_address = device_address
@@ -39,7 +39,7 @@ class RoboticGloveController:
             self.is_connected = True
             print(f"Connected to {self.device_address}.")
 
-            # --- Find Characteristic Object ---
+            # Find service using UART_SERVICE_UUID
             found_service = None
             for service in self.client.services:
                 # Compare UUIDs case-insensitively, and handle potential 16-bit vs 128-bit forms
@@ -92,7 +92,7 @@ class RoboticGloveController:
                 print(f"Error disconnecting: {e}")
         else:
             print("Not connected.")
-            
+
     async def read_data(self):
         """
         Reads data from the read characteristic.
@@ -103,39 +103,34 @@ class RoboticGloveController:
 
         try:
             data = await self.client.read_gatt_char(self.read_char_object)
-            decoded = data.decode("utf-8", errors="ignore")  # or parse/struct unpack if needed
-            print(f"Received (BLE): {decoded}")
+            # or parse/struct unpack if needed
+            decoded = data.decode("utf-8", errors="ignore")
             return decoded
         except Exception as e:
             print(f"Error reading from characteristic: {e}")
             return None
 
-    async def _send_command(self, command_char: str, value: int):
+    async def _send_command(self, user_input: str):
         """
         Sends a command to the Arduino over BLE.
-        :param command_char: The single character command (e.g., 'A', 'R').
-        :param value: The integer value to send (e.g., servo angle, color component).
         """
         if not self.is_connected or not self.client:
             print("Not connected to BLE device. Cannot send command.")
             return
 
-        # Ensure value is an integer
-        value_int = int(value)
-
-        # Format the command string per default protocol
-        command_string = f"{command_char}{value_int}$"
-        command_bytes = command_string.encode('utf-8')
+        if not user_input.endswith("$"):
+            user_input += "$"
 
         try:
             # Write to the characteristic. Use write_gatt_char for sending data.
             # 'response=True' means it expects a confirmation from the device (slower but reliable).
             # 'response=False' means 'write without response' (faster, less reliable).
-            # Choose based on device's characteristic properties and needs.
-            await self.client.write_gatt_char(self.write_char_object, command_bytes, response=False)
-            print(f"Sent (BLE): {command_string}")
+            await self.client.write_gatt_char(self.write_char_object,
+                                              user_input.encode("utf-8"),
+                                              response=False)
+
         except Exception as e:
-            print(f"Error sending command '{command_string}' over BLE: {e}")
+            print(f"Error sending command '{user_input}' over BLE: {e}")
 
     async def set_servo_angle(self, servo_index: int, angle: int):
         """
@@ -160,13 +155,16 @@ class RoboticGloveController:
         """
         for i in range(5):
             await self.set_servo_angle(i, angle)
-        print(f"Set all servos to {angle} degrees.")
+            print(f"Set all servos to {angle} degrees.")
 
-    # --- Helper for discovering devices ---
     @staticmethod
     async def discover_devices_async(name):
+        """
+        Helper function for discovering devices
+        """
         print("Scanning for BLE devices...")
-        device = await BleakScanner.find_device_by_name(name, timeout=10.0) # Scan for 10 seconds
+        # Scan for 5 seconds
+        device = await BleakScanner.find_device_by_name(name, timeout=5.0)
 
         if not device:
             print(f"No BLE device with name {name} found.")
@@ -175,9 +173,6 @@ class RoboticGloveController:
         print(f"Device {name} found.")
         return device
 
-
-# --- Main execution block (Asyncio) ---
-import time
 
 async def main():
     print("--- Discovering BLE Devices ---")
@@ -196,31 +191,14 @@ async def main():
                 if user_input.lower() == 'q':
                     break
 
-                if not user_input.endswith("$"):
-                    user_input += "$"
+                # Write command
+                await controller._send_command(user_input)
 
-                # Measure latency
-                start_time = time.perf_counter()
+                # wait for device to respond before reading
+                await asyncio.sleep(0.05)
+                message = await controller.read_data()
 
-                try:
-                    await controller.client.write_gatt_char(
-                        controller.write_char_object,
-                        user_input.encode("utf-8"),
-                        response=False
-                    )
-                    # Optional: wait for device to respond before reading
-                    # await asyncio.sleep(0.05)
-
-                    if controller.read_char_object:
-                        response = await controller.client.read_gatt_char(controller.read_char_object)
-                        print(f"Response: {response.decode('utf-8', errors='ignore')}")
-
-                except Exception as e:
-                    print(f"Error during communication: {e}")
-
-                end_time = time.perf_counter()
-                latency_ms = (end_time - start_time) * 1000
-                print(f"Round-trip time: {latency_ms:.2f} ms\n")
+                print(f"Received (BLE): {message}")
 
         except KeyboardInterrupt:
             print("\nExiting program.")
